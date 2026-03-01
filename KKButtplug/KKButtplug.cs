@@ -1,6 +1,7 @@
-﻿using BepInEx;
+using BepInEx;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using Photon.Pun;
 
 // uGUI
 using UnityEngine.UI;
@@ -12,6 +13,8 @@ using System.Threading;
 using System.Text.RegularExpressions;
 using System.IO;
 using System.Collections.Generic;
+
+using HarmonyLib;
 
 [BepInPlugin("com.yourname.kkbuttplug", "KK Buttplug", "7.1.0")]
 public class KKButtplug : BaseUnityPlugin
@@ -29,6 +32,82 @@ public class KKButtplug : BaseUnityPlugin
     // Prevent stop-scan spam
     private bool _scanStopSent = false;
 
+    // ===== Source-mixed vibration (no smoothing) =====
+    // Each driver writes a named strength (0..1). We send max(strengths).
+    private readonly Dictionary<string, float> _sourceStrength = new Dictionary<string, float>();
+    private float _lastMixedSent = -1f;
+
+    /// <summary>
+    /// Back-compat: set vibration as "manual" source.
+    /// </summary>
+    public void SetVibration(float strength) => SetSourceVibration("manual", strength);
+
+    /// <summary>
+    /// Set vibration contribution from a named source (0..1).
+    /// Final output is max of all sources. No smoothing.
+    /// </summary>
+    public void SetSourceVibration(string source, float strength)
+    {
+        if (string.IsNullOrEmpty(source)) source = "default";
+        strength = Mathf.Clamp01(strength);
+
+        lock (_sourceStrength)
+            _sourceStrength[source] = strength;
+    }
+
+    /// <summary>
+    /// Clear a named source contribution.
+    /// </summary>
+    public void ClearSource(string source)
+    {
+        if (string.IsNullOrEmpty(source)) source = "default";
+        lock (_sourceStrength)
+            _sourceStrength.Remove(source);
+    }
+
+    private void ClearAllSources()
+    {
+        lock (_sourceStrength)
+            _sourceStrength.Clear();
+        _lastMixedSent = -1f;
+    }
+
+    /// <summary>
+    /// Stop all connected devices and clear all sources.
+    /// </summary>
+    public void StopAll()
+    {
+        if (!_connected || _ws == null)
+            return;
+
+        ClearAllSources();
+        SendStopAll();
+    }
+
+    private void ApplyMixedVibration()
+    {
+        if (!_connected || _ws == null)
+            return;
+
+        float mixed = 0f;
+        lock (_sourceStrength)
+        {
+            foreach (var kv in _sourceStrength)
+                if (kv.Value > mixed) mixed = kv.Value;
+        }
+
+        // No smoothing, but avoid redundant WS spam if identical
+        if (Mathf.Abs(mixed - _lastMixedSent) < 0.0001f)
+            return;
+
+        _lastMixedSent = mixed;
+
+        if (mixed <= 0.001f)
+            SendStopAll();
+        else
+            SendVibrateAll(mixed);
+    }
+
     private const string ServerUrl = "ws://127.0.0.1:12345";
 
     // ===== Overlay UI (uGUI) =====
@@ -37,21 +116,40 @@ public class KKButtplug : BaseUnityPlugin
     private Text _statusText;
     private Text _countText;
     private Text _deviceListText;
-    
-    
 
     private bool _showUi = true;
 
     // Thread -> main thread UI refresh
     private volatile bool _uiDirty = true;
 
+    // ===== Driver bootstrap (local player only) =====
+    private float _attachScanTimer = 0f;
+
+    // Track which local kobold we're attached to (so reset/rejoin reattaches)
+    private Kobold _attachedKobold = null;
+    private int _attachedKoboldViewId = -1;
+
+    // Harmony (for orgasm hooks)
+    private Harmony _harmony;
+
     private void Awake()
     {
         Logger.LogInfo("========== KK BUTTPLUG (Multi-device WS Mode) ==========");
         Logger.LogInfo("F9  = Toggle UI");
         Logger.LogInfo("F10 = Connect/Scan");
-        Logger.LogInfo("F11 = Vibrate 50% (all devices)");
+        Logger.LogInfo("F11 = Vibrate 50% (manual)");
         Logger.LogInfo("F12 = Stop (all devices)");
+
+        try
+        {
+            _harmony = new Harmony("com.yourname.kkbuttplug.harmony");
+            _harmony.PatchAll();
+            Logger.LogInfo("[KKButtplug] Harmony patches applied.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("[KKButtplug] Harmony patch failed (orgasm hooks will not work): " + ex);
+        }
 
         // IMPORTANT: Don't create fonts/UI in Awake in KK (graphics device can be null early)
         StartCoroutine(InitUiWhenReady());
@@ -59,11 +157,9 @@ public class KKButtplug : BaseUnityPlugin
 
     private System.Collections.IEnumerator InitUiWhenReady()
     {
-        // Wait a couple frames for Unity to be properly initialized
         yield return null;
         yield return null;
 
-        // If we are still too early (graphics device not ready), wait up to 10 seconds
         float timeout = 10f;
         while (timeout > 0f && SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
         {
@@ -103,26 +199,115 @@ public class KKButtplug : BaseUnityPlugin
         if (Keyboard.current.f11Key.wasPressedThisFrame)
         {
             Logger.LogInfo("F11 pressed");
-            SendVibrateAll(0.5f);
+            SetVibration(0.5f);
         }
 
         if (Keyboard.current.f12Key.wasPressedThisFrame)
         {
             Logger.LogInfo("F12 pressed");
-            SendStopAll();
+            StopAll();
         }
 
-        // Main-thread UI refresh
         if (_uiDirty)
         {
             _uiDirty = false;
             RefreshUI();
         }
+
+        BootstrapDriversResilient();
+        ApplyMixedVibration();
+    }
+
+    // Resilient bootstrap: reattach after reset/rejoin (local kobold object changes)
+    private void BootstrapDriversResilient()
+    {
+        _attachScanTimer -= Time.unscaledDeltaTime;
+        if (_attachScanTimer > 0f)
+            return;
+        _attachScanTimer = 0.5f;
+
+        try
+        {
+            var kobolds = FindObjectsOfType<Kobold>();
+            if (kobolds == null || kobolds.Length == 0)
+            {
+                // If we previously had one and now none exist (scene transition), clear sources.
+                if (_attachedKobold != null)
+                {
+                    Logger.LogInfo("[KKButtplug] No kobolds found (transition). Clearing sources + stopping devices.");
+                    _attachedKobold = null;
+                    _attachedKoboldViewId = -1;
+                    ClearAllSources();
+                    if (_connected && _ws != null) SendStopAll();
+                }
+                return;
+            }
+
+            Kobold local = null;
+            PhotonView localPv = null;
+
+            foreach (var k in kobolds)
+            {
+                if (k == null) continue;
+                var pv = k.GetComponent<PhotonView>();
+                if (pv != null && pv.IsMine)
+                {
+                    local = k;
+                    localPv = pv;
+                    break;
+                }
+            }
+
+            if (local == null || localPv == null)
+                return;
+
+            // Detect respawn/rejoin: local player kobold object changed
+            bool changed =
+                _attachedKobold == null ||
+                _attachedKoboldViewId != localPv.ViewID ||
+                _attachedKobold != local;
+
+            if (changed)
+            {
+                Logger.LogInfo($"[KKButtplug] Local kobold changed (old={_attachedKoboldViewId}, new={localPv.ViewID}). Rebinding drivers.");
+
+                // Clear sources so old drivers don't hold a value
+                ClearAllSources();
+
+                // Optional: immediate stop to prevent edge-case stuck vibration during load
+                if (_connected && _ws != null)
+                    SendStopAll();
+
+                _attachedKobold = local;
+                _attachedKoboldViewId = localPv.ViewID;
+            }
+
+            // Ensure drivers exist on current local kobold (even after respawn)
+            var recv = local.GetComponent<KKButtplugReceivingDriver>();
+            if (recv == null) recv = local.gameObject.AddComponent<KKButtplugReceivingDriver>();
+            recv.kobold = local;
+            recv.buttplug = this;
+
+            var give = local.GetComponent<KKButtplugGivingDriver>();
+            if (give == null) give = local.gameObject.AddComponent<KKButtplugGivingDriver>();
+            give.kobold = local;
+            give.buttplug = this;
+
+            var org = local.GetComponent<KKButtplugOrgasmDriver>();
+            if (org == null) org = local.gameObject.AddComponent<KKButtplugOrgasmDriver>();
+            org.kobold = local;
+            org.buttplug = this;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning("[KKButtplug] Failed to attach drivers (will retry): " + ex.Message);
+        }
     }
 
     private void OnDestroy()
     {
-        // Don't leave threads/sockets running
+        try { _harmony?.UnpatchSelf(); } catch { }
+
         try { _cts?.Cancel(); } catch { }
         CleanupSocket();
 
@@ -206,7 +391,6 @@ public class KKButtplug : BaseUnityPlugin
 
                 HandleIncoming(msg);
 
-                // Stop scanning once when we have at least 1 device
                 if (!_scanStopSent && GetDeviceCount() > 0)
                 {
                     _scanStopSent = true;
@@ -218,8 +402,6 @@ public class KKButtplug : BaseUnityPlugin
                             }}
                         }}
                     ]");
-
-                    Logger.LogInfo("Scanning stopped (device(s) ready).");
                 }
             }
         }
@@ -278,7 +460,6 @@ public class KKButtplug : BaseUnityPlugin
     {
         try
         {
-            // DeviceList: replace full list
             if (json.Contains("DeviceList"))
             {
                 var matches = Regex.Matches(json, @"""DeviceIndex"":\s*(\d+)");
@@ -288,13 +469,10 @@ public class KKButtplug : BaseUnityPlugin
                     foreach (Match m in matches)
                         _deviceIndices.Add(int.Parse(m.Groups[1].Value));
                 }
-
-                Logger.LogInfo("DeviceList received. Devices now: " + GetDeviceCount());
                 MarkUiDirty();
                 return;
             }
 
-            // DeviceAdded: add one
             if (json.Contains("DeviceAdded"))
             {
                 var match = Regex.Match(json, @"""DeviceIndex"":\s*(\d+)");
@@ -302,13 +480,11 @@ public class KKButtplug : BaseUnityPlugin
                 {
                     int idx = int.Parse(match.Groups[1].Value);
                     lock (_deviceIndices) _deviceIndices.Add(idx);
-                    Logger.LogInfo("Device added. Index = " + idx + " | Total = " + GetDeviceCount());
                     MarkUiDirty();
                 }
                 return;
             }
 
-            // DeviceRemoved: remove one
             if (json.Contains("DeviceRemoved"))
             {
                 var match = Regex.Match(json, @"""DeviceIndex"":\s*(\d+)");
@@ -316,9 +492,7 @@ public class KKButtplug : BaseUnityPlugin
                 {
                     int idx = int.Parse(match.Groups[1].Value);
                     lock (_deviceIndices) _deviceIndices.Remove(idx);
-                    Logger.LogInfo("Device removed. Index = " + idx + " | Total = " + GetDeviceCount());
 
-                    // If no devices remain, allow scanning again (optional)
                     if (GetDeviceCount() == 0)
                         _scanStopSent = false;
 
@@ -348,10 +522,7 @@ public class KKButtplug : BaseUnityPlugin
             indices = new List<int>(_deviceIndices).ToArray();
 
         if (indices.Length == 0)
-        {
-            Logger.LogWarning("No device ready.");
             return;
-        }
 
         foreach (var idx in indices)
         {
@@ -367,8 +538,6 @@ public class KKButtplug : BaseUnityPlugin
                 }}
             ]");
         }
-
-        Logger.LogInfo($"Vibrate sent to {indices.Length} device(s).");
     }
 
     private void SendStopAll()
@@ -394,8 +563,6 @@ public class KKButtplug : BaseUnityPlugin
                 }}
             ]");
         }
-
-        Logger.LogInfo($"Stop sent to {indices.Length} device(s).");
     }
 
     private void SendJson(string json)
@@ -443,10 +610,7 @@ public class KKButtplug : BaseUnityPlugin
 
     // ===== UI Helpers =====
 
-    private void MarkUiDirty()
-    {
-        _uiDirty = true;
-    }
+    private void MarkUiDirty() => _uiDirty = true;
 
     private void RefreshUI()
     {
@@ -457,8 +621,6 @@ public class KKButtplug : BaseUnityPlugin
 
         if (_countText != null)
             _countText.text = $"Devices: {GetDeviceCount()}";
-
-        
 
         if (_deviceListText != null)
         {
@@ -483,31 +645,15 @@ public class KKButtplug : BaseUnityPlugin
 
     private Font GetSafeFont(int size)
     {
-        // In KoboldKare, Resources.GetBuiltinResource("Arial.ttf") errors/crashes early.
-        // Use OS font, but only AFTER graphics device is ready (InitUiWhenReady handles that).
-        try
-        {
-            var font = Font.CreateDynamicFontFromOSFont(new[] { "Segoe UI", "Arial", "Tahoma" }, size);
-            if (font == null)
-                Logger.LogError("[KKButtplug] OS font fallback returned null.");
-            else
-                Logger.LogInfo($"[KKButtplug] Using OS font: {font.name}");
-            return font;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError("[KKButtplug] GetSafeFont failed: " + ex);
-            return null;
-        }
+        try { return Font.CreateDynamicFontFromOSFont(new[] { "Segoe UI", "Arial", "Tahoma" }, size); }
+        catch { return null; }
     }
 
     private void BuildUI()
     {
-        // Root
         _uiRoot = new GameObject("KKButtplug_UI");
         DontDestroyOnLoad(_uiRoot);
 
-        // Canvas
         _canvas = _uiRoot.AddComponent<Canvas>();
         _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         _canvas.sortingOrder = 9999;
@@ -515,7 +661,6 @@ public class KKButtplug : BaseUnityPlugin
         _uiRoot.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         _uiRoot.AddComponent<GraphicRaycaster>();
 
-        // Panel
         var panel = new GameObject("Panel");
         panel.transform.SetParent(_uiRoot.transform, false);
 
@@ -531,28 +676,17 @@ public class KKButtplug : BaseUnityPlugin
 
         var layout = panel.AddComponent<VerticalLayoutGroup>();
         layout.childAlignment = TextAnchor.UpperLeft;
-
-        // Don't rely on the 4-arg ctor; some ref sets in your environment hide it.
-        layout.padding = new RectOffset();
-        layout.padding.left = 12;
-        layout.padding.right = 12;
-        layout.padding.top = 12;
-        layout.padding.bottom = 12;
-
+        layout.padding = new RectOffset { left = 12, right = 12, top = 12, bottom = 12 };
         layout.spacing = 8f;
 
         panel.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        // Font (safe)
         Font font = GetSafeFont(14);
 
-        // Title
         CreateText(panel.transform, "KK Buttplug", font, 18, FontStyle.Bold);
-
         _statusText = CreateText(panel.transform, "Connected: false", font, 14, FontStyle.Normal);
         _countText = CreateText(panel.transform, "Devices: 0", font, 14, FontStyle.Normal);
 
-        // Buttons row
         var row = new GameObject("ButtonRow");
         row.transform.SetParent(panel.transform, false);
         var rowLayout = row.AddComponent<HorizontalLayoutGroup>();
@@ -561,19 +695,13 @@ public class KKButtplug : BaseUnityPlugin
         rowLayout.childForceExpandWidth = true;
 
         CreateButton(row.transform, "Connect / Scan", font, () => StartWebSocket());
-        CreateButton(row.transform, "Stop All", font, () => SendStopAll());
+        CreateButton(row.transform, "Stop All", font, () => StopAll());
+        CreateButton(panel.transform, "Manual Vibrate (50%)", font, () => SetVibration(0.5f));
 
-        CreateButton(panel.transform, "Vibrate All (50%)", font, () =>
-        {
-            SendVibrateAll(0.5f);
-        });
-
-        // Device list
         CreateText(panel.transform, "Device Indices", font, 14, FontStyle.Bold);
         _deviceListText = CreateText(panel.transform, "(none)", font, 14, FontStyle.Normal);
         _deviceListText.alignment = TextAnchor.UpperLeft;
 
-        // Give multiline list room
         var listLe = _deviceListText.gameObject.GetComponent<LayoutElement>();
         if (listLe != null) listLe.minHeight = 140f;
 
@@ -582,25 +710,8 @@ public class KKButtplug : BaseUnityPlugin
 
     private Text CreateText(Transform parent, string text, Font font, int size, FontStyle style)
     {
-        // Guard: if font creation failed, don't crash. Keep layout stable.
-        if (font == null)
-        {
-            var placeholder = new GameObject("Text_Placeholder");
-            placeholder.transform.SetParent(parent, false);
-            var lePh = placeholder.AddComponent<LayoutElement>();
-            lePh.minHeight = 22f;
-
-            var tPh = placeholder.AddComponent<Text>();
-            tPh.text = "";
-            tPh.raycastTarget = false;
-            return tPh;
-        }
-
         var go = new GameObject("Text");
         go.transform.SetParent(parent, false);
-
-        var rt = go.AddComponent<RectTransform>();
-        rt.sizeDelta = new Vector2(0f, 0f); // let layout drive size
 
         var le = go.AddComponent<LayoutElement>();
         le.minHeight = 22f;
@@ -611,12 +722,9 @@ public class KKButtplug : BaseUnityPlugin
         t.fontStyle = style;
         t.color = Color.white;
         t.text = text;
-
         t.horizontalOverflow = HorizontalWrapMode.Wrap;
         t.verticalOverflow = VerticalWrapMode.Overflow;
         t.alignment = TextAnchor.MiddleLeft;
-
-        // Don't block clicks
         t.raycastTarget = false;
 
         return t;
@@ -640,7 +748,7 @@ public class KKButtplug : BaseUnityPlugin
         textGo.transform.SetParent(go.transform, false);
 
         var txt = textGo.AddComponent<Text>();
-        txt.font = font; // can be null if font failed; in that case, label won't render but won't crash
+        txt.font = font;
         txt.fontSize = 14;
         txt.color = Color.white;
         txt.alignment = TextAnchor.MiddleCenter;
@@ -655,5 +763,4 @@ public class KKButtplug : BaseUnityPlugin
 
         return btn;
     }
-
 }

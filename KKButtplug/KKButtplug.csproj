@@ -35,8 +35,8 @@
     <Reference Include="0Harmony">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\BepInEx\core\0Harmony.dll</HintPath>
     </Reference>
-    <Reference Include="0Harmony20">
-      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\BepInEx\core\0Harmony20.dll</HintPath>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\Assembly-CSharp.dll</HintPath>
     </Reference>
     <Reference Include="BepInEx">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\BepInEx\core\BepInEx.dll</HintPath>
@@ -77,8 +77,20 @@
     <Reference Include="MonoMod.Utils">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\BepInEx\core\MonoMod.Utils.dll</HintPath>
     </Reference>
+    <Reference Include="Naelstrof.PenetrationTech">
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\Naelstrof.PenetrationTech.dll</HintPath>
+    </Reference>
+    <Reference Include="Naelstrof.PhotonShared">
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\Naelstrof.PhotonShared.dll</HintPath>
+    </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>..\packages\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="PhotonRealtime">
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\PhotonRealtime.dll</HintPath>
+    </Reference>
+    <Reference Include="PhotonUnityNetworking">
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\PhotonUnityNetworking.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -114,6 +126,10 @@
     <Reference Include="UnityEngine.AnimationModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\KoboldKare\KoboldKare_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
@@ -168,7 +184,11 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Class1.cs" />
+    <Compile Include="KKButtplug.cs" />
+    <Compile Include="KKButtplugGivingDriver.cs" />
+    <Compile Include="KKButtplugOrgasmDriver.cs" />
+    <Compile Include="KKButtplugOrgasmHooks.cs" />
+    <Compile Include="KKButtplugReceivingDriver.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
