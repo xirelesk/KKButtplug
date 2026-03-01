@@ -10,6 +10,9 @@ public class KKButtplugMilkingDriver : MonoBehaviour
 
     private int _pulsesRemaining = 0;
     private float _intervalTimer = 0f;
+    private float _burstTimer = 0f;
+
+    private bool _burstActive = false;
 
     private void OnEnable()
     {
@@ -36,7 +39,10 @@ public class KKButtplugMilkingDriver : MonoBehaviour
             return;
 
         _pulsesRemaining = Mathf.Max(1, KKButtplug.MilkPulseCount.Value);
-        _intervalTimer = KKButtplug.MilkPulseInterval.Value;
+
+        _intervalTimer = 0f;   // fire first pulse immediately
+        _burstTimer = 0f;
+        _burstActive = false;
     }
 
     private void Update()
@@ -50,17 +56,38 @@ public class KKButtplugMilkingDriver : MonoBehaviour
             return;
         }
 
-        float strength = Mathf.Clamp01(KKButtplug.MilkVibration.Value);
-        buttplug.SetSourceVibration(SourceId, strength);
+        float interval = Mathf.Max(0.05f, KKButtplug.MilkPulseInterval.Value);
 
-        _intervalTimer -= Time.unscaledDeltaTime;
+        // Burst duration is derived from interval.
+        // This keeps compatibility with your config and prevents hardware smoothing.
+        float burstDuration = Mathf.Clamp(interval * 0.25f, 0.08f, 0.25f);
 
-        if (_intervalTimer <= 0f)
+        if (!_burstActive)
         {
-            _pulsesRemaining--;
+            _intervalTimer -= Time.unscaledDeltaTime;
 
-            if (_pulsesRemaining > 0)
-                _intervalTimer = KKButtplug.MilkPulseInterval.Value;
+            if (_intervalTimer <= 0f)
+            {
+                _burstActive = true;
+                _burstTimer = burstDuration;
+
+                _pulsesRemaining--;
+            }
+
+            buttplug.SetSourceVibration(SourceId, 0f);
+        }
+        else
+        {
+            _burstTimer -= Time.unscaledDeltaTime;
+
+            float strength = Mathf.Clamp01(KKButtplug.MilkVibration.Value);
+            buttplug.SetSourceVibration(SourceId, strength);
+
+            if (_burstTimer <= 0f)
+            {
+                _burstActive = false;
+                _intervalTimer = interval - burstDuration;
+            }
         }
     }
 }

@@ -168,21 +168,21 @@ public class KKButtplug : BaseUnityPlugin
         OrgasmBuzzDuration = Config.Bind(
             "Orgasm",
             "OrgasmBuzzDuration",
-            0.08f,
+            0.18f,
             "Duration (seconds) of each buzz burst during orgasm pattern. WARNING: Values below 0.05 may not register on some devices."
         );
 
         OrgasmPauseDuration = Config.Bind(
             "Orgasm",
             "OrgasmPauseDuration",
-            0.12f,
+            0.18f,
             "Duration (seconds) of pause between buzz bursts. WARNING: Very low values may be smoothed by hardware and feel continuous."
         );
 
         FemaleOrgasmDuration = Config.Bind(
             "Orgasm",
             "FemaleOrgasmDuration",
-            5f,
+            7f,
             "Duration in seconds of female orgasm vibration."
         );
 
@@ -208,7 +208,7 @@ public class KKButtplug : BaseUnityPlugin
         );
 
         Logger.LogInfo("========== KK BUTTPLUG ==========");
-        Logger.LogInfo("F9 = Toggle UI (Connect + Reattach are UI-only)");
+        Logger.LogInfo("F9 = Toggle UI (Connect/Scan is UI-only)");
 
         try
         {
@@ -270,8 +270,52 @@ public class KKButtplug : BaseUnityPlugin
         ApplyMixedVibration();
     }
 
+    // =========================
+    //  LOCAL KOBOLD RESOLUTION
+    // =========================
+    //
+    // IMPORTANT:
+    // After brain swaps, PhotonView.IsMine can be misleading.
+    // The game uses Photon Player.TagObject to map Player <-> Kobold.
+    // Prefer LocalPlayer.TagObject; fall back to IsMine scan only if TagObject isn't set.
+
+    private Kobold GetLocalControlledKobold()
+    {
+        try
+        {
+            var lp = PhotonNetwork.LocalPlayer;
+            if (lp != null)
+            {
+                if (lp.TagObject is Kobold taggedKobold && taggedKobold != null)
+                    return taggedKobold;
+
+                foreach (var p in PhotonNetwork.PlayerList)
+                {
+                    if (p == null) continue;
+                    if (!p.IsLocal) continue;
+
+                    var k = p.TagObject as Kobold;
+                    if (k != null)
+                        return k;
+                }
+            }
+        }
+        catch
+        {
+            // ignore, fall back
+        }
+
+        return null;
+    }
+
     private Kobold FindLocalKobold()
     {
+        // Prefer the game's player->kobold mapping after swaps
+        var tagged = GetLocalControlledKobold();
+        if (tagged != null)
+            return tagged;
+
+        // Fallback: ownership scan (can be wrong after swaps, but better than nothing)
         var kobolds = FindObjectsOfType<Kobold>();
         if (kobolds == null || kobolds.Length == 0)
             return null;
@@ -317,6 +361,7 @@ public class KKButtplug : BaseUnityPlugin
 
     private void BootstrapDrivers()
     {
+        // If currently attached, verify we are still attached to the *currently controlled* kobold.
         if (_driversAttached)
         {
             if (_attachedLocalKobold == null || _attachedLocalKobold.gameObject == null)
@@ -325,14 +370,23 @@ public class KKButtplug : BaseUnityPlugin
             }
             else
             {
-                var pv = _attachedLocalKobold.GetComponent<PhotonView>();
-                if (pv == null || !pv.IsMine)
+                // Detect brain swaps reliably (do not trust IsMine here)
+                Kobold currentControlled = FindLocalKobold();
+                if (currentControlled != null && currentControlled != _attachedLocalKobold)
                 {
-                    ResetDriverAttachmentState("attached kobold no longer local");
+                    ResetDriverAttachmentState("local controlled kobold changed (brain swap)");
                 }
-                else if (_attachedLocalViewId != 0 && pv.ViewID != _attachedLocalViewId)
+                else
                 {
-                    ResetDriverAttachmentState("PhotonView changed (respawn?)");
+                    var pv = _attachedLocalKobold.GetComponent<PhotonView>();
+                    if (pv == null)
+                    {
+                        ResetDriverAttachmentState("attached kobold missing PhotonView");
+                    }
+                    else if (_attachedLocalViewId != 0 && pv.ViewID != _attachedLocalViewId)
+                    {
+                        ResetDriverAttachmentState("PhotonView changed (respawn?)");
+                    }
                 }
             }
         }
@@ -343,7 +397,9 @@ public class KKButtplug : BaseUnityPlugin
         _attachScanTimer -= Time.unscaledDeltaTime;
         if (_attachScanTimer > 0f)
             return;
-        _attachScanTimer = 0.5f;
+
+        // Slightly faster recovery after swaps/respawns
+        _attachScanTimer = 0.25f;
 
         try
         {
@@ -356,7 +412,7 @@ public class KKButtplug : BaseUnityPlugin
 
             if (_attachedLocalKobold != null && local != _attachedLocalKobold)
             {
-                ResetDriverAttachmentState("local kobold instance changed (respawn)");
+                ResetDriverAttachmentState("reattach: local kobold instance changed");
             }
 
             var recv = local.GetComponent<KKButtplugReceivingDriver>();
@@ -383,7 +439,7 @@ public class KKButtplug : BaseUnityPlugin
             _attachedLocalViewId = localViewId;
             _driversAttached = true;
 
-            Logger.LogInfo($"[KKButtplug] Attached drivers to local player: {local.name} (ViewID={_attachedLocalViewId})");
+            Logger.LogInfo($"[KKButtplug] Attached drivers to local controlled player: {local.name} (ViewID={_attachedLocalViewId})");
         }
         catch (Exception ex)
         {
@@ -778,7 +834,6 @@ public class KKButtplug : BaseUnityPlugin
         rowLayout.childForceExpandWidth = true;
 
         CreateButton(row.transform, "Connect / Scan", font, () => StartWebSocket());
-        CreateButton(row.transform, "Reattach", font, () => ForceReattach());
 
         CreateText(panel.transform, "Device Indices", font, 14, FontStyle.Bold);
         _deviceListText = CreateText(panel.transform, "(none)", font, 14, FontStyle.Normal);
@@ -788,20 +843,6 @@ public class KKButtplug : BaseUnityPlugin
         if (listLe != null) listLe.minHeight = 140f;
 
         _uiRoot.SetActive(_showUi);
-    }
-
-    private void ForceReattach()
-    {
-        Logger.LogInfo("[KKButtplug] Reattach pressed.");
-
-        // This invalidates any in-flight orgasm/milking events and clears all sources/devices.
-        ResetDriverAttachmentState("manual reattach button");
-
-        // Try to attach immediately instead of waiting up to 0.5s.
-        _attachScanTimer = 0f;
-        BootstrapDrivers();
-
-        MarkUiDirty();
     }
 
     private Text CreateText(Transform parent, string text, Font font, int size, FontStyle style)
