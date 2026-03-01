@@ -7,16 +7,11 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
     public Kobold kobold;
     public KKButtplug buttplug;
 
-    [Header("Output")]
-    [Range(0f, 1f)] public float orgasmVibration = 1.0f;
-
-    [Header("Female Orgasm Duration (no-dick)")]
-    public float femaleOrgasmDurationSeconds = 3.0f;
-
     private const string SourceId = "orgasm";
 
     private bool _maleActive = false;
     private float _femaleTimer = 0f;
+    private float _patternTimer = 0f;
 
     private void OnEnable()
     {
@@ -43,35 +38,31 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
 
     private void OnMaleStart(Kobold who)
     {
-        if (kobold == null || who == null) return;
-        if (who != kobold) return;
-        if (!IsLocal()) return;
+        if (kobold == null || who != kobold || !IsLocal()) return;
 
         _maleActive = true;
+        _patternTimer = 0f;
     }
 
     private void OnMaleEnd(Kobold who)
     {
-        if (kobold == null || who == null) return;
-        if (who != kobold) return;
-        if (!IsLocal()) return;
+        if (kobold == null || who != kobold || !IsLocal()) return;
 
         _maleActive = false;
     }
 
     private void OnFemaleTrigger(Kobold who)
     {
-        if (kobold == null || who == null) return;
-        if (who != kobold) return;
-        if (!IsLocal()) return;
+        if (kobold == null || who != kobold || !IsLocal()) return;
 
-        _femaleTimer = Mathf.Max(_femaleTimer, femaleOrgasmDurationSeconds);
+        _femaleTimer = KKButtplug.FemaleOrgasmDuration.Value;
+        _patternTimer = 0f;
     }
 
     private void Update()
     {
-        if (kobold == null || buttplug == null) return;
-        if (!IsLocal()) return;
+        if (kobold == null || buttplug == null || !IsLocal())
+            return;
 
         bool active = false;
 
@@ -82,12 +73,40 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
         else if (_femaleTimer > 0f)
         {
             _femaleTimer -= Time.unscaledDeltaTime;
+            if (_femaleTimer < 0f) _femaleTimer = 0f;
             active = true;
         }
 
-        if (active)
-            buttplug.SetSourceVibration(SourceId, orgasmVibration);
-        else
+        if (!active)
+        {
             buttplug.SetSourceVibration(SourceId, 0f);
+            return;
+        }
+
+        float baseStrength = Mathf.Clamp01(KKButtplug.OrgasmVibration.Value);
+
+        if (!KKButtplug.UseOrgasmPattern.Value)
+        {
+            buttplug.SetSourceVibration(SourceId, baseStrength);
+            return;
+        }
+
+        // Read config safely
+        float buzz = Mathf.Max(0.02f, KKButtplug.OrgasmBuzzDuration.Value);
+        float pause = Mathf.Max(0.02f, KKButtplug.OrgasmPauseDuration.Value);
+        float cycle = buzz + pause;
+
+        _patternTimer += Time.unscaledDeltaTime;
+        if (_patternTimer >= cycle)
+            _patternTimer -= cycle;
+
+        if (_patternTimer <= buzz)
+        {
+            buttplug.SetSourceVibration(SourceId, baseStrength);
+        }
+        else
+        {
+            buttplug.SetSourceVibration(SourceId, 0f);
+        }
     }
 }

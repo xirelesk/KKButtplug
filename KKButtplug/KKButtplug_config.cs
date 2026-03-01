@@ -16,7 +16,7 @@ using System.Collections.Generic;
 
 using HarmonyLib;
 
-[BepInPlugin("com.yourname.kkbuttplug", "KK Buttplug", "7.1.0")]
+[BepInPlugin("xirelesk.kkbuttplug", "KK Buttplug", "1.0.0")]
 public class KKButtplug : BaseUnityPlugin
 {
     private ClientWebSocket _ws;
@@ -32,20 +32,26 @@ public class KKButtplug : BaseUnityPlugin
     // Prevent stop-scan spam
     private bool _scanStopSent = false;
 
+    // ===== Config =====
+    public static BepInEx.Configuration.ConfigEntry<string> ServerUrlConfig;
+    public static BepInEx.Configuration.ConfigEntry<float> MinVibration;
+    public static BepInEx.Configuration.ConfigEntry<float> MaxVibration;
+    public static BepInEx.Configuration.ConfigEntry<float> OrgasmVibration;
+    public static BepInEx.Configuration.ConfigEntry<float> FemaleOrgasmDuration;
+    public static BepInEx.Configuration.ConfigEntry<bool> UseOrgasmPattern;
+    public static BepInEx.Configuration.ConfigEntry<float> OrgasmBuzzDuration;
+    public static BepInEx.Configuration.ConfigEntry<float> OrgasmPauseDuration;
+    public static BepInEx.Configuration.ConfigEntry<float> MilkVibration;
+    public static BepInEx.Configuration.ConfigEntry<float> MilkPulseInterval;
+    public static BepInEx.Configuration.ConfigEntry<int> MilkPulseCount;
+
     // ===== Source-mixed vibration (no smoothing) =====
     // Each driver writes a named strength (0..1). We send max(strengths).
     private readonly Dictionary<string, float> _sourceStrength = new Dictionary<string, float>();
     private float _lastMixedSent = -1f;
 
-    /// <summary>
-    /// Back-compat: set vibration as "manual" source.
-    /// </summary>
     public void SetVibration(float strength) => SetSourceVibration("manual", strength);
 
-    /// <summary>
-    /// Set vibration contribution from a named source (0..1).
-    /// Final output is max of all sources. No smoothing.
-    /// </summary>
     public void SetSourceVibration(string source, float strength)
     {
         if (string.IsNullOrEmpty(source)) source = "default";
@@ -55,9 +61,6 @@ public class KKButtplug : BaseUnityPlugin
             _sourceStrength[source] = strength;
     }
 
-    /// <summary>
-    /// Clear a named source contribution.
-    /// </summary>
     public void ClearSource(string source)
     {
         if (string.IsNullOrEmpty(source)) source = "default";
@@ -65,22 +68,15 @@ public class KKButtplug : BaseUnityPlugin
             _sourceStrength.Remove(source);
     }
 
-    private void ClearAllSources()
-    {
-        lock (_sourceStrength)
-            _sourceStrength.Clear();
-        _lastMixedSent = -1f;
-    }
-
-    /// <summary>
-    /// Stop all connected devices and clear all sources.
-    /// </summary>
     public void StopAll()
     {
         if (!_connected || _ws == null)
             return;
 
-        ClearAllSources();
+        lock (_sourceStrength)
+            _sourceStrength.Clear();
+
+        _lastMixedSent = -1f;
         SendStopAll();
     }
 
@@ -96,19 +92,19 @@ public class KKButtplug : BaseUnityPlugin
                 if (kv.Value > mixed) mixed = kv.Value;
         }
 
-        // No smoothing, but avoid redundant WS spam if identical
+        mixed = Mathf.Clamp01(mixed);
+
+        // Avoid redundant WS spam if identical
         if (Mathf.Abs(mixed - _lastMixedSent) < 0.0001f)
             return;
 
         _lastMixedSent = mixed;
 
-        if (mixed <= 0.001f)
-            SendStopAll();
-        else
-            SendVibrateAll(mixed);
+        // IMPORTANT:
+        // Use VibrateCmd(0) instead of StopDeviceCmd for "off" phases,
+        // otherwise fast buzz patterns get eaten by stop/start behavior.
+        SendVibrateAll(mixed);
     }
-
-    private const string ServerUrl = "ws://127.0.0.1:12345";
 
     // ===== Overlay UI (uGUI) =====
     private GameObject _uiRoot;
@@ -118,40 +114,113 @@ public class KKButtplug : BaseUnityPlugin
     private Text _deviceListText;
 
     private bool _showUi = true;
-
-    // Thread -> main thread UI refresh
     private volatile bool _uiDirty = true;
 
     // ===== Driver bootstrap (local player only) =====
     private float _attachScanTimer = 0f;
+    private bool _driversAttached = false;
 
-    // Track which local kobold we're attached to (so reset/rejoin reattaches)
-    private Kobold _attachedKobold = null;
-    private int _attachedKoboldViewId = -1;
+    // Respawn-safe attachment
+    private Kobold _attachedLocalKobold = null;
+    private int _attachedLocalViewId = 0;
 
-    // Harmony (for orgasm hooks)
     private Harmony _harmony;
 
     private void Awake()
     {
-        Logger.LogInfo("========== KK BUTTPLUG (Multi-device WS Mode) ==========");
-        Logger.LogInfo("F9  = Toggle UI");
-        Logger.LogInfo("F10 = Connect/Scan");
-        Logger.LogInfo("F11 = Vibrate 50% (manual)");
-        Logger.LogInfo("F12 = Stop (all devices)");
+        // ===== Config Bindings =====
+        ServerUrlConfig = Config.Bind(
+            "Connection",
+            "ServerUrl",
+            "ws://127.0.0.1:12345",
+            "WebSocket URL for Intiface server."
+        );
+
+        MinVibration = Config.Bind(
+            "Vibration",
+            "MinVibration",
+            0.10f,
+            "Minimum vibration strength while active."
+        );
+
+        MaxVibration = Config.Bind(
+            "Vibration",
+            "MaxVibration",
+            0.7f,
+            "Maximum vibration strength during stimulation."
+        );
+
+        OrgasmVibration = Config.Bind(
+            "Vibration",
+            "OrgasmVibration",
+            1.0f,
+            "Vibration strength during orgasm."
+        );
+
+        UseOrgasmPattern = Config.Bind(
+    "Orgasm",
+    "UseOrgasmPattern",
+    true,
+    "If true, orgasm uses a pulsing vibration pattern instead of constant strength."
+);
+
+        OrgasmBuzzDuration = Config.Bind(
+    "Orgasm",
+    "OrgasmBuzzDuration",
+    0.08f,
+    "Duration (seconds) of each buzz burst during orgasm pattern. WARNING: Values below 0.05 may not register on some devices."
+);
+
+        OrgasmPauseDuration = Config.Bind(
+            "Orgasm",
+            "OrgasmPauseDuration",
+            0.12f,
+            "Duration (seconds) of pause between buzz bursts. WARNING: Very low values may be smoothed by hardware and feel continuous."
+        );
+
+        FemaleOrgasmDuration = Config.Bind(
+            "Orgasm",
+            "FemaleOrgasmDuration",
+            5f,
+            "Duration in seconds of female orgasm vibration."
+        );
+
+        MilkVibration = Config.Bind(
+            "Milking",
+            "MilkVibration",
+            0.4f,
+            "Vibration strength during each milking pulse."
+        );
+
+        MilkPulseInterval = Config.Bind(
+            "Milking",
+            "MilkPulseInterval",
+            1.0f,
+            "Seconds per milking pulse. (Game default is 1.0s)"
+        );
+
+        MilkPulseCount = Config.Bind(
+            "Milking",
+            "MilkPulseCount",
+            12,
+            "Number of pulses per milking event. (Game default is 12)"
+        );
+
+
+        Logger.LogInfo("========== KK BUTTPLUG ==========");
+        Logger.LogInfo("F9 = Toggle UI (Connect is UI-only)");
 
         try
         {
-            _harmony = new Harmony("com.yourname.kkbuttplug.harmony");
+            _harmony = new Harmony("xirelesk.kkbuttplug.harmony");
             _harmony.PatchAll();
             Logger.LogInfo("[KKButtplug] Harmony patches applied.");
         }
         catch (Exception ex)
         {
-            Logger.LogError("[KKButtplug] Harmony patch failed (orgasm hooks will not work): " + ex);
+            Logger.LogError("[KKButtplug] Harmony patch failed: " + ex);
         }
 
-        // IMPORTANT: Don't create fonts/UI in Awake in KK (graphics device can be null early)
         StartCoroutine(InitUiWhenReady());
     }
 
@@ -184,28 +253,11 @@ public class KKButtplug : BaseUnityPlugin
         if (Keyboard.current == null)
             return;
 
+        // Only hotkey left: UI toggle
         if (Keyboard.current.f9Key.wasPressedThisFrame)
         {
             _showUi = !_showUi;
             if (_uiRoot != null) _uiRoot.SetActive(_showUi);
-        }
-
-        if (Keyboard.current.f10Key.wasPressedThisFrame)
-        {
-            Logger.LogInfo("F10 pressed");
-            StartWebSocket();
-        }
-
-        if (Keyboard.current.f11Key.wasPressedThisFrame)
-        {
-            Logger.LogInfo("F11 pressed");
-            SetVibration(0.5f);
-        }
-
-        if (Keyboard.current.f12Key.wasPressedThisFrame)
-        {
-            Logger.LogInfo("F12 pressed");
-            StopAll();
         }
 
         if (_uiDirty)
@@ -214,13 +266,63 @@ public class KKButtplug : BaseUnityPlugin
             RefreshUI();
         }
 
-        BootstrapDriversResilient();
+        BootstrapDrivers();
         ApplyMixedVibration();
     }
 
-    // Resilient bootstrap: reattach after reset/rejoin (local kobold object changes)
-    private void BootstrapDriversResilient()
+    private Kobold FindLocalKobold()
     {
+        var kobolds = FindObjectsOfType<Kobold>();
+        if (kobolds == null || kobolds.Length == 0)
+            return null;
+
+        foreach (var k in kobolds)
+        {
+            if (k == null) continue;
+            var pv = k.GetComponent<PhotonView>();
+            if (pv != null && pv.IsMine)
+                return k;
+        }
+
+        return null;
+    }
+
+    private void ResetDriverAttachmentState(string reason)
+    {
+        StopAll();
+
+        _driversAttached = false;
+        _attachedLocalKobold = null;
+        _attachedLocalViewId = 0;
+
+        Logger.LogInfo("[KKButtplug] Driver attachment reset: " + reason);
+    }
+
+    private void BootstrapDrivers()
+    {
+        if (_driversAttached)
+        {
+            if (_attachedLocalKobold == null || _attachedLocalKobold.gameObject == null)
+            {
+                ResetDriverAttachmentState("attached kobold destroyed (respawn?)");
+            }
+            else
+            {
+                var pv = _attachedLocalKobold.GetComponent<PhotonView>();
+                if (pv == null || !pv.IsMine)
+                {
+                    ResetDriverAttachmentState("attached kobold no longer local");
+                }
+                else if (_attachedLocalViewId != 0 && pv.ViewID != _attachedLocalViewId)
+                {
+                    ResetDriverAttachmentState("PhotonView changed (respawn?)");
+                }
+            }
+        }
+
+        if (_driversAttached)
+            return;
+
         _attachScanTimer -= Time.unscaledDeltaTime;
         if (_attachScanTimer > 0f)
             return;
@@ -228,61 +330,18 @@ public class KKButtplug : BaseUnityPlugin
 
         try
         {
-            var kobolds = FindObjectsOfType<Kobold>();
-            if (kobolds == null || kobolds.Length == 0)
-            {
-                // If we previously had one and now none exist (scene transition), clear sources.
-                if (_attachedKobold != null)
-                {
-                    Logger.LogInfo("[KKButtplug] No kobolds found (transition). Clearing sources + stopping devices.");
-                    _attachedKobold = null;
-                    _attachedKoboldViewId = -1;
-                    ClearAllSources();
-                    if (_connected && _ws != null) SendStopAll();
-                }
-                return;
-            }
-
-            Kobold local = null;
-            PhotonView localPv = null;
-
-            foreach (var k in kobolds)
-            {
-                if (k == null) continue;
-                var pv = k.GetComponent<PhotonView>();
-                if (pv != null && pv.IsMine)
-                {
-                    local = k;
-                    localPv = pv;
-                    break;
-                }
-            }
-
-            if (local == null || localPv == null)
+            Kobold local = FindLocalKobold();
+            if (local == null)
                 return;
 
-            // Detect respawn/rejoin: local player kobold object changed
-            bool changed =
-                _attachedKobold == null ||
-                _attachedKoboldViewId != localPv.ViewID ||
-                _attachedKobold != local;
+            var localPv = local.GetComponent<PhotonView>();
+            int localViewId = localPv != null ? localPv.ViewID : 0;
 
-            if (changed)
+            if (_attachedLocalKobold != null && local != _attachedLocalKobold)
             {
-                Logger.LogInfo($"[KKButtplug] Local kobold changed (old={_attachedKoboldViewId}, new={localPv.ViewID}). Rebinding drivers.");
-
-                // Clear sources so old drivers don't hold a value
-                ClearAllSources();
-
-                // Optional: immediate stop to prevent edge-case stuck vibration during load
-                if (_connected && _ws != null)
-                    SendStopAll();
-
-                _attachedKobold = local;
-                _attachedKoboldViewId = localPv.ViewID;
+                ResetDriverAttachmentState("local kobold instance changed (respawn)");
             }
 
-            // Ensure drivers exist on current local kobold (even after respawn)
             var recv = local.GetComponent<KKButtplugReceivingDriver>();
             if (recv == null) recv = local.gameObject.AddComponent<KKButtplugReceivingDriver>();
             recv.kobold = local;
@@ -297,6 +356,17 @@ public class KKButtplug : BaseUnityPlugin
             if (org == null) org = local.gameObject.AddComponent<KKButtplugOrgasmDriver>();
             org.kobold = local;
             org.buttplug = this;
+
+            var milk = local.GetComponent<KKButtplugMilkingDriver>();
+            if (milk == null) milk = local.gameObject.AddComponent<KKButtplugMilkingDriver>();
+            milk.kobold = local;
+            milk.buttplug = this;
+
+            _attachedLocalKobold = local;
+            _attachedLocalViewId = localViewId;
+            _driversAttached = true;
+
+            Logger.LogInfo($"[KKButtplug] Attached drivers to local player: {local.name} (ViewID={_attachedLocalViewId})");
         }
         catch (Exception ex)
         {
@@ -316,6 +386,14 @@ public class KKButtplug : BaseUnityPlugin
             try { Destroy(_uiRoot); } catch { }
             _uiRoot = null;
         }
+    }
+
+    // UI button calls this
+    private void OnConnectButton()
+    {
+        Logger.LogInfo("[KKButtplug] Connect button clicked.");
+        StartWebSocket();
+        MarkUiDirty();
     }
 
     private void StartWebSocket()
@@ -338,7 +416,7 @@ public class KKButtplug : BaseUnityPlugin
             _ws = new ClientWebSocket();
 
             Logger.LogInfo("Connecting to Intiface...");
-            _ws.ConnectAsync(new Uri(ServerUrl), _cts.Token).GetAwaiter().GetResult();
+            _ws.ConnectAsync(new Uri(ServerUrlConfig.Value), _cts.Token).GetAwaiter().GetResult();
 
             _connected = true;
             lock (_deviceIndices) _deviceIndices.Clear();
@@ -347,7 +425,6 @@ public class KKButtplug : BaseUnityPlugin
             Logger.LogInfo("Connected!");
             MarkUiDirty();
 
-            // Handshake
             SendJson($@"[
                 {{
                     ""RequestServerInfo"": {{
@@ -358,7 +435,6 @@ public class KKButtplug : BaseUnityPlugin
                 }}
             ]");
 
-            // Get already-connected devices
             SendJson($@"[
                 {{
                     ""RequestDeviceList"": {{
@@ -367,7 +443,6 @@ public class KKButtplug : BaseUnityPlugin
                 }}
             ]");
 
-            // Scan for new devices
             SendJson($@"[
                 {{
                     ""StartScanning"": {{
@@ -509,11 +584,7 @@ public class KKButtplug : BaseUnityPlugin
 
     private void SendVibrateAll(float strength)
     {
-        if (!_connected)
-        {
-            Logger.LogWarning("Not connected.");
-            return;
-        }
+        if (!_connected) return;
 
         strength = Mathf.Clamp01(strength);
 
@@ -521,8 +592,7 @@ public class KKButtplug : BaseUnityPlugin
         lock (_deviceIndices)
             indices = new List<int>(_deviceIndices).ToArray();
 
-        if (indices.Length == 0)
-            return;
+        if (indices.Length == 0) return;
 
         foreach (var idx in indices)
         {
@@ -542,15 +612,13 @@ public class KKButtplug : BaseUnityPlugin
 
     private void SendStopAll()
     {
-        if (!_connected)
-            return;
+        if (!_connected) return;
 
         int[] indices;
         lock (_deviceIndices)
             indices = new List<int>(_deviceIndices).ToArray();
 
-        if (indices.Length == 0)
-            return;
+        if (indices.Length == 0) return;
 
         foreach (var idx in indices)
         {
@@ -687,16 +755,21 @@ public class KKButtplug : BaseUnityPlugin
         _statusText = CreateText(panel.transform, "Connected: false", font, 14, FontStyle.Normal);
         _countText = CreateText(panel.transform, "Devices: 0", font, 14, FontStyle.Normal);
 
+        // ===== Button Row =====
         var row = new GameObject("ButtonRow");
         row.transform.SetParent(panel.transform, false);
+
+        var rowLe = row.AddComponent<LayoutElement>();
+        rowLe.minHeight = 32f;
+        rowLe.preferredHeight = 32f;
+
         var rowLayout = row.AddComponent<HorizontalLayoutGroup>();
         rowLayout.spacing = 8f;
-        rowLayout.childForceExpandHeight = false;
+        rowLayout.childForceExpandHeight = true;
         rowLayout.childForceExpandWidth = true;
 
+        // ONLY Connect button now
         CreateButton(row.transform, "Connect / Scan", font, () => StartWebSocket());
-        CreateButton(row.transform, "Stop All", font, () => StopAll());
-        CreateButton(panel.transform, "Manual Vibrate (50%)", font, () => SetVibration(0.5f));
 
         CreateText(panel.transform, "Device Indices", font, 14, FontStyle.Bold);
         _deviceListText = CreateText(panel.transform, "(none)", font, 14, FontStyle.Normal);
@@ -734,6 +807,12 @@ public class KKButtplug : BaseUnityPlugin
     {
         var go = new GameObject($"Button_{label}");
         go.transform.SetParent(parent, false);
+
+        // ✅ FIX: LayoutElement gives layout groups a real height/width to use
+        var le = go.AddComponent<LayoutElement>();
+        le.minHeight = 32f;
+        le.preferredHeight = 32f;
+        le.flexibleWidth = 1f;
 
         var img = go.AddComponent<Image>();
         img.color = new Color(1f, 1f, 1f, 0.15f);

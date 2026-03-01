@@ -1,40 +1,67 @@
 using System;
 using System.Collections;
+using System.Reflection;
 using HarmonyLib;
 
 // Orgasm hooks:
 // - Male orgasm duration: wraps DickDescriptor.CumRoutine() enumerator so we get start + end.
 // - Female orgasm: Kobold.Cum() fires but there is no CumRoutine; we emit FemaleOrgasmTriggered.
+[HarmonyPatch]
 public static class KKButtplugOrgasmHooks
 {
     public static event Action<Kobold> MaleOrgasmStarted;
     public static event Action<Kobold> MaleOrgasmEnded;
     public static event Action<Kobold> FemaleOrgasmTriggered;
 
+    // Cache reflection field once (not per call)
+    private static readonly FieldInfo _attachedKoboldField =
+        typeof(DickDescriptor).GetField(
+            "attachedKobold",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+
+    // =============================
+    // Male orgasm (wrap CumRoutine)
+    // =============================
     [HarmonyPatch(typeof(DickDescriptor), nameof(DickDescriptor.CumRoutine))]
     private static class Patch_DickDescriptor_CumRoutine
     {
-        // Postfix replacement enumerator: we yield the original but can run code before/after.
+        [HarmonyPostfix]
         private static IEnumerator Postfix(IEnumerator __result, DickDescriptor __instance)
         {
+            if (__result == null)
+                yield break;
+
             Kobold k = GetAttachedKobold(__instance);
+
             if (k != null)
                 MaleOrgasmStarted?.Invoke(k);
 
-            while (__result != null && __result.MoveNext())
-                yield return __result.Current;
+            bool finishedNaturally = false;
 
-            if (k != null)
+            while (__result.MoveNext())
+            {
+                yield return __result.Current;
+            }
+
+            finishedNaturally = true;
+
+            if (k != null && finishedNaturally)
                 MaleOrgasmEnded?.Invoke(k);
         }
     }
 
+    // =============================
+    // Female orgasm (Kobold.Cum)
+    // =============================
     [HarmonyPatch(typeof(Kobold), nameof(Kobold.Cum))]
     private static class Patch_Kobold_Cum
     {
+        [HarmonyPostfix]
         private static void Postfix(Kobold __instance)
         {
-            if (__instance == null) return;
+            if (__instance == null)
+                return;
 
             // Female/no-dick orgasm has no coroutine duration signal.
             if (__instance.activeDicks == null || __instance.activeDicks.Count == 0)
@@ -44,15 +71,12 @@ public static class KKButtplugOrgasmHooks
 
     private static Kobold GetAttachedKobold(DickDescriptor descriptor)
     {
-        // DickDescriptor has a private field "attachedKobold".
-        // Using reflection here is OK because it's not per-frame, and avoids a brittle "FindObjectOfType" guess.
+        if (descriptor == null || _attachedKoboldField == null)
+            return null;
+
         try
         {
-            var f = typeof(DickDescriptor).GetField("attachedKobold",
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic);
-
-            return f != null ? (Kobold)f.GetValue(descriptor) : null;
+            return (Kobold)_attachedKoboldField.GetValue(descriptor);
         }
         catch
         {

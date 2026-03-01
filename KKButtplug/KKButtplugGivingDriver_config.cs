@@ -9,10 +9,6 @@ public class KKButtplugGivingDriver : MonoBehaviour
     public Kobold kobold;
     public KKButtplug buttplug;
 
-    [Header("Output")]
-    [Range(0f, 1f)] public float maxVibration = 0.70f;
-    [Range(0f, 1f)] public float minVibrationWhenNegativeStimulation = 0.10f;
-
     private int _active = 0;
     private readonly HashSet<Penetrator> _subs = new HashSet<Penetrator>();
 
@@ -27,7 +23,9 @@ public class KKButtplugGivingDriver : MonoBehaviour
     {
         Unsubscribe();
         _active = 0;
-        if (buttplug != null) buttplug.ClearSource(SourceId);
+
+        if (buttplug != null)
+            buttplug.ClearSource(SourceId);
     }
 
     private bool IsLocal()
@@ -58,9 +56,11 @@ public class KKButtplugGivingDriver : MonoBehaviour
         foreach (var p in _subs)
         {
             if (p == null) continue;
+
             p.penetrationStart -= OnStart;
             p.penetrationEnd -= OnEnd;
         }
+
         _subs.Clear();
     }
 
@@ -82,7 +82,8 @@ public class KKButtplugGivingDriver : MonoBehaviour
         if (!IsLocal()) return;
 
         // Keep up with dicks being added later (async equip)
-        Subscribe();
+        if (kobold.activeDicks != null && kobold.activeDicks.Count > _subs.Count)
+            Subscribe();
 
         if (_active <= 0)
         {
@@ -90,13 +91,24 @@ public class KKButtplugGivingDriver : MonoBehaviour
             return;
         }
 
-        float target;
+        float target = 0f;
+
         if (kobold.stimulation < 0f)
-            target = minVibrationWhenNegativeStimulation;
+        {
+            // Below zero → minimum vibration (while giving only)
+            target = KKButtplug.MinVibration.Value;
+        }
         else if (kobold.stimulationMax > 0.001f)
-            target = (kobold.stimulation / kobold.stimulationMax) * maxVibration;
-        else
-            target = 0f;
+        {
+            float normalized = kobold.stimulation / kobold.stimulationMax;
+            normalized = Mathf.Clamp01(normalized);
+
+            target = Mathf.Lerp(
+                KKButtplug.MinVibration.Value,
+                KKButtplug.MaxVibration.Value,
+                normalized
+            );
+        }
 
         buttplug.SetSourceVibration(SourceId, Mathf.Clamp01(target));
     }
