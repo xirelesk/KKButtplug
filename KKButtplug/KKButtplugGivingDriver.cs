@@ -12,10 +12,14 @@ public class KKButtplugGivingDriver : MonoBehaviour
     private int _active = 0;
     private readonly HashSet<Penetrator> _subs = new HashSet<Penetrator>();
 
+    // Throttled resubscribe for async equips / different prefab layouts
+    private float _resubTimer = 0f;
+
     private const string SourceId = "giving";
 
     private void OnEnable()
     {
+        _resubTimer = 0f;
         Subscribe();
     }
 
@@ -36,18 +40,26 @@ public class KKButtplugGivingDriver : MonoBehaviour
 
     private void Subscribe()
     {
-        if (kobold == null) return;
+        if (kobold == null || kobold.activeDicks == null)
+            return;
 
         foreach (var ds in kobold.activeDicks)
         {
-            if (ds?.dick == null) continue;
+            if (ds?.descriptor == null)
+                continue;
 
-            var p = ds.dick;
-            if (_subs.Contains(p)) continue;
+            // Search the entire dick prefab hierarchy (penetrator location varies per dick type)
+            var penetrators = ds.descriptor.GetComponentsInChildren<Penetrator>(true);
 
-            p.penetrationStart += OnStart;
-            p.penetrationEnd += OnEnd;
-            _subs.Add(p);
+            foreach (var p in penetrators)
+            {
+                if (p == null) continue;
+                if (_subs.Contains(p)) continue;
+
+                p.penetrationStart += OnStart;
+                p.penetrationEnd += OnEnd;
+                _subs.Add(p);
+            }
         }
     }
 
@@ -81,9 +93,13 @@ public class KKButtplugGivingDriver : MonoBehaviour
         if (kobold == null || buttplug == null) return;
         if (!IsLocal()) return;
 
-        // Keep up with dicks being added later (async equip)
-        if (kobold.activeDicks != null && kobold.activeDicks.Count > _subs.Count)
+        // Periodically rescan for penetrators (covers async equip + multi-penetrator prefabs)
+        _resubTimer -= Time.unscaledDeltaTime;
+        if (_resubTimer <= 0f)
+        {
+            _resubTimer = 0.5f;
             Subscribe();
+        }
 
         if (_active <= 0)
         {
