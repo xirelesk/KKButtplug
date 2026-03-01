@@ -186,11 +186,11 @@
   <ItemGroup>
     <Compile Include="KKButtplugMilkingHooks.cs" />
     <Compile Include="KKButtplugMilkingDriver.cs" />
-    <Compile Include="KKButtplugGivingDriver_config.cs" />
-    <Compile Include="KKButtplugOrgasmDriver_config.cs" />
+    <Compile Include="KKButtplugGivingDriver.cs" />
+    <Compile Include="KKButtplugOrgasmDriver.cs" />
     <Compile Include="KKButtplugOrgasmHooks.cs" />
-    <Compile Include="KKButtplugReceivingDriver_config.cs" />
-    <Compile Include="KKButtplug_config.cs" />
+    <Compile Include="KKButtplugReceivingDriver.cs" />
+    <Compile Include="KKButtplug.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

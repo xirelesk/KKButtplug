@@ -41,6 +41,7 @@ public class KKButtplug : BaseUnityPlugin
     public static BepInEx.Configuration.ConfigEntry<bool> UseOrgasmPattern;
     public static BepInEx.Configuration.ConfigEntry<float> OrgasmBuzzDuration;
     public static BepInEx.Configuration.ConfigEntry<float> OrgasmPauseDuration;
+
     public static BepInEx.Configuration.ConfigEntry<float> MilkVibration;
     public static BepInEx.Configuration.ConfigEntry<float> MilkPulseInterval;
     public static BepInEx.Configuration.ConfigEntry<int> MilkPulseCount;
@@ -158,18 +159,18 @@ public class KKButtplug : BaseUnityPlugin
         );
 
         UseOrgasmPattern = Config.Bind(
-    "Orgasm",
-    "UseOrgasmPattern",
-    true,
-    "If true, orgasm uses a pulsing vibration pattern instead of constant strength."
-);
+            "Orgasm",
+            "UseOrgasmPattern",
+            true,
+            "If true, orgasm uses a pulsing vibration pattern instead of constant strength."
+        );
 
         OrgasmBuzzDuration = Config.Bind(
-    "Orgasm",
-    "OrgasmBuzzDuration",
-    0.08f,
-    "Duration (seconds) of each buzz burst during orgasm pattern. WARNING: Values below 0.05 may not register on some devices."
-);
+            "Orgasm",
+            "OrgasmBuzzDuration",
+            0.08f,
+            "Duration (seconds) of each buzz burst during orgasm pattern. WARNING: Values below 0.05 may not register on some devices."
+        );
 
         OrgasmPauseDuration = Config.Bind(
             "Orgasm",
@@ -196,19 +197,18 @@ public class KKButtplug : BaseUnityPlugin
             "Milking",
             "MilkPulseInterval",
             1.0f,
-            "Seconds per milking pulse. (Game default is 1.0s)"
+            "Seconds between milking pulses. (Game default is 1.0s). WARNING: Very low values (e.g. < 0.2s) may be smoothed by hardware or missed at low FPS."
         );
 
         MilkPulseCount = Config.Bind(
             "Milking",
             "MilkPulseCount",
             12,
-            "Number of pulses per milking event. (Game default is 12)"
+            "Number of pulses per milking event. (Game default is 12). WARNING: Very high counts can keep vibration running for a long time."
         );
 
-
         Logger.LogInfo("========== KK BUTTPLUG ==========");
-        Logger.LogInfo("F9 = Toggle UI (Connect is UI-only)");
+        Logger.LogInfo("F9 = Toggle UI (Connect + Reattach are UI-only)");
 
         try
         {
@@ -287,9 +287,26 @@ public class KKButtplug : BaseUnityPlugin
         return null;
     }
 
+    private void DestroyDrivers(Kobold k)
+    {
+        if (k == null) return;
+
+        try { Destroy(k.GetComponent<KKButtplugReceivingDriver>()); } catch { }
+        try { Destroy(k.GetComponent<KKButtplugGivingDriver>()); } catch { }
+        try { Destroy(k.GetComponent<KKButtplugOrgasmDriver>()); } catch { }
+        try { Destroy(k.GetComponent<KKButtplugMilkingDriver>()); } catch { }
+    }
+
     private void ResetDriverAttachmentState(string reason)
     {
+        // Invalidate any in-flight orgasm events/coroutines from the old attachment.
+        KKButtplugOrgasmHooks.OrgasmGeneration++;
+
+        // Hard reset all vibration + sources.
         StopAll();
+
+        // Best-effort: remove old driver components so they unsubscribe cleanly.
+        DestroyDrivers(_attachedLocalKobold);
 
         _driversAttached = false;
         _attachedLocalKobold = null;
@@ -386,14 +403,6 @@ public class KKButtplug : BaseUnityPlugin
             try { Destroy(_uiRoot); } catch { }
             _uiRoot = null;
         }
-    }
-
-    // UI button calls this
-    private void OnConnectButton()
-    {
-        Logger.LogInfo("[KKButtplug] Connect button clicked.");
-        StartWebSocket();
-        MarkUiDirty();
     }
 
     private void StartWebSocket()
@@ -768,8 +777,8 @@ public class KKButtplug : BaseUnityPlugin
         rowLayout.childForceExpandHeight = true;
         rowLayout.childForceExpandWidth = true;
 
-        // ONLY Connect button now
         CreateButton(row.transform, "Connect / Scan", font, () => StartWebSocket());
+        CreateButton(row.transform, "Reattach", font, () => ForceReattach());
 
         CreateText(panel.transform, "Device Indices", font, 14, FontStyle.Bold);
         _deviceListText = CreateText(panel.transform, "(none)", font, 14, FontStyle.Normal);
@@ -779,6 +788,20 @@ public class KKButtplug : BaseUnityPlugin
         if (listLe != null) listLe.minHeight = 140f;
 
         _uiRoot.SetActive(_showUi);
+    }
+
+    private void ForceReattach()
+    {
+        Logger.LogInfo("[KKButtplug] Reattach pressed.");
+
+        // This invalidates any in-flight orgasm/milking events and clears all sources/devices.
+        ResetDriverAttachmentState("manual reattach button");
+
+        // Try to attach immediately instead of waiting up to 0.5s.
+        _attachScanTimer = 0f;
+        BootstrapDrivers();
+
+        MarkUiDirty();
     }
 
     private Text CreateText(Transform parent, string text, Font font, int size, FontStyle style)
@@ -808,7 +831,6 @@ public class KKButtplug : BaseUnityPlugin
         var go = new GameObject($"Button_{label}");
         go.transform.SetParent(parent, false);
 
-        // ✅ FIX: LayoutElement gives layout groups a real height/width to use
         var le = go.AddComponent<LayoutElement>();
         le.minHeight = 32f;
         le.preferredHeight = 32f;

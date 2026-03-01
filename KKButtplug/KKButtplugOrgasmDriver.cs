@@ -11,10 +11,17 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
 
     private bool _maleActive = false;
     private float _femaleTimer = 0f;
+
+    // Guard against stale events when /swap or manual reattach happens.
+    private int _localGeneration = -1;
+
+    // Pattern timer
     private float _patternTimer = 0f;
 
     private void OnEnable()
     {
+        _localGeneration = KKButtplugOrgasmHooks.OrgasmGeneration;
+
         KKButtplugOrgasmHooks.MaleOrgasmStarted += OnMaleStart;
         KKButtplugOrgasmHooks.MaleOrgasmEnded += OnMaleEnd;
         KKButtplugOrgasmHooks.FemaleOrgasmTriggered += OnFemaleTrigger;
@@ -36,9 +43,14 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
         return pv != null && pv.IsMine;
     }
 
+    private bool IsStale()
+    {
+        return _localGeneration != KKButtplugOrgasmHooks.OrgasmGeneration;
+    }
+
     private void OnMaleStart(Kobold who)
     {
-        if (kobold == null || who != kobold || !IsLocal()) return;
+        if (kobold == null || who != kobold || !IsLocal() || IsStale()) return;
 
         _maleActive = true;
         _patternTimer = 0f;
@@ -46,16 +58,16 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
 
     private void OnMaleEnd(Kobold who)
     {
-        if (kobold == null || who != kobold || !IsLocal()) return;
+        if (kobold == null || who != kobold || !IsLocal() || IsStale()) return;
 
         _maleActive = false;
     }
 
     private void OnFemaleTrigger(Kobold who)
     {
-        if (kobold == null || who != kobold || !IsLocal()) return;
+        if (kobold == null || who != kobold || !IsLocal() || IsStale()) return;
 
-        _femaleTimer = KKButtplug.FemaleOrgasmDuration.Value;
+        _femaleTimer = Mathf.Max(_femaleTimer, KKButtplug.FemaleOrgasmDuration.Value);
         _patternTimer = 0f;
     }
 
@@ -63,6 +75,16 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
     {
         if (kobold == null || buttplug == null || !IsLocal())
             return;
+
+        if (IsStale())
+        {
+            // We were detached while this driver was active.
+            buttplug.SetSourceVibration(SourceId, 0f);
+            _maleActive = false;
+            _femaleTimer = 0f;
+            _patternTimer = 0f;
+            return;
+        }
 
         bool active = false;
 
@@ -91,22 +113,25 @@ public class KKButtplugOrgasmDriver : MonoBehaviour
             return;
         }
 
-        // Read config safely
-        float buzz = Mathf.Max(0.02f, KKButtplug.OrgasmBuzzDuration.Value);
-        float pause = Mathf.Max(0.02f, KKButtplug.OrgasmPauseDuration.Value);
+        // ===== BURST PATTERN (phone buzz) =====
+        float buzz = Mathf.Max(0.01f, KKButtplug.OrgasmBuzzDuration.Value);
+        float pause = Mathf.Max(0.00f, KKButtplug.OrgasmPauseDuration.Value);
         float cycle = buzz + pause;
 
         _patternTimer += Time.unscaledDeltaTime;
+
+        if (cycle <= 0.001f)
+        {
+            buttplug.SetSourceVibration(SourceId, baseStrength);
+            return;
+        }
+
         if (_patternTimer >= cycle)
             _patternTimer -= cycle;
 
         if (_patternTimer <= buzz)
-        {
             buttplug.SetSourceVibration(SourceId, baseStrength);
-        }
         else
-        {
             buttplug.SetSourceVibration(SourceId, 0f);
-        }
     }
 }
