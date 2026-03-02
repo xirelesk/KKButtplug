@@ -7,6 +7,8 @@
 
 [Buttplug.io](Buttplug.io)
 
+[Check if your toy is compatible](https://iostindex.com/?filter0Availability=DIY,Available&filter1Connection=Digital)
+
 # ⚠Disclaimer⚠
  ### **Creation of this plugin was assisted with AI**
 This was originally made for personal use. However, with permission from the moderators, I was allowed to post this. I am not a programmer or game developer, and I will never claim to be. I have nothing but the utmost respect for all developers, as this wouldn't have been possible otherwise. Some individuals may have issues regarding this being developed with AI, which is very understandable, and I likely agree with how you feel. Please just know that I am posting this out of appreciation for the game and the community. I welcome anyone to recreate, modify/improve, or criticize this plugin.
@@ -61,6 +63,8 @@ This was originally made for personal use. However, with permission from the mod
   
 
 ## Notes / Known Issues:
+- This plugin has only so far been tested with https://iostindex.com/devices/joyhub/trueform/
+  If you have any issues with disconnections or anything of the sort. Let me know on discord or report it as an issue and ill try my best to fix it
 - This plugin is (mostly) stable at 60 FPS, but should work fine at any framerate
 - Toy may get stuck vibrating or other weirdness when swapping or interacting with many kobolds at once
 - If it ever glitches out: resetting your kobold, leaving and rejoining, and closing the game should fix it.
