@@ -1,13 +1,13 @@
 # KKButplug: Adds buttplug.io functionality to KoboldKare
 
 ### Links:
-[VIRUS TOTAL](https://www.virustotal.com/gui/file/cb1a302089b8ef2220b0bbbc23a655bc4d5992f7774a7d99442bbacfec19adee?nocache=1)
+- [VIRUS TOTAL](https://www.virustotal.com/gui/file/cb1a302089b8ef2220b0bbbc23a655bc4d5992f7774a7d99442bbacfec19adee?nocache=1)
 
-[Intiface](https://intiface.com)
+- [Intiface](https://intiface.com)
 
-[Buttplug.io](Buttplug.io)
+- [Buttplug.io](Buttplug.io)
 
-[Check if your toy is compatible](https://iostindex.com/?filter0Availability=DIY,Available&filter1Connection=Digital)
+- [Check if your toy is compatible](https://iostindex.com/?filter0Availability=DIY,Available&filter1Connection=Digital)
 
 # ⚠Disclaimer⚠
  ### **Creation of this plugin was assisted with AI**
