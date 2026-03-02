@@ -38,8 +38,8 @@ This was originally made for personal use. However, with permission from the mod
 ##  Configuration:
   
   ### Custom ServerUrl:
-  -by defualt this will be: ws://127.0.0.1:12345
-  -This is functinaly the same as ws://localhost:12345
+  - by defualt this will be: ws://127.0.0.1:12345
+  - This is functinaly the same as ws://localhost:12345
   
 ### Vibration:
 - Minimum and maximum vibration strength
