@@ -12,7 +12,7 @@
 This was originally made for personal use. However, with permission from the moderators, I was allowed to post this. I am not a programmer or game developer, and I will never claim to be. I have nothing but the utmost respect for all developers, as this wouldn't have been possible otherwise. Some individuals may have issues regarding this being developed with AI, which is very understandable, and I likely agree with how you feel. Please just know that I am posting this out of appreciation for the game and the community. I welcome anyone to recreate, modify/improve, or criticize this plugin.
 
 ## How to install:
-1. Please follow the instructions posted in the discord [here](https://discord.com/channels/582108898262253578/1182845710731857950) in the Discord.
+1. Please follow the instructions posted in the discord [here](https://discord.com/channels/582108898262253578/1182845710731857950).
  
 2. Drag and drop 'KKButtplug.dll' into your plugins folder
  
