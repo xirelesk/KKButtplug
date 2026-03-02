@@ -45,8 +45,9 @@ This was originally made for personal use. However, with permission from the mod
   
 ### Vibration:
 - Minimum and maximum vibration strength
--Vibration slowly increases in scale as satisfaction increases from 0 to its maximum. 
--When satisfaction is below zero, it will vibrate at a minimum 
+- Vibration slowly increases in scale as satisfaction increases from 0 to its maximum. 
+- When satisfaction is below zero, it will vibrate at a minimum
+- I recomend using CumControl sliders in the player console to adjust your min and max satisfaction levels (Make sure to leave it off though)
   
 ###  Orgasm:
  - strength (Separate from min and max vibration)
