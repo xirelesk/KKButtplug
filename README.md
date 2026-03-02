@@ -28,9 +28,9 @@ This was originally made for personal use. However, with permission from the mod
  4.  press the connect button
 
 ## Features:
- Multiple toys
- 
- Your toy will vibrate when:
+- Multiple toys
+- Modded Kobold and dick support
+- Your toy will vibrate when:
     Giving/receiving: anal, vaginal, or oral
     When cumming
     When lacatiing
@@ -64,5 +64,6 @@ This was originally made for personal use. However, with permission from the mod
 - This plugin is (mostly) stable at 60 FPS, but should work fine at any framerate
 - Toy may get stuck vibrating or other weirdness when swapping or interacting with many kobolds at once
 - If it ever glitches out: resetting your kobold, leaving and rejoining, and closing the game should fix it.
+- There may potentially be issues with vibration detection while using modded kobolds and or dicks.
 
 
