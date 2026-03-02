@@ -1,6 +1,6 @@
 # KKButplug: Adds buttplug.io functionality to KoboldKare
 
-## Links:
+### Links:
 [VIRUS TOTAL](https://www.virustotal.com/gui/file/cb1a302089b8ef2220b0bbbc23a655bc4d5992f7774a7d99442bbacfec19adee?nocache=1)
 
 [Intiface](https://intiface.com)
